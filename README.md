@@ -12,7 +12,7 @@ std::future<int> future = pool->submit([] {
     std::cout << "A start" << std::endl;
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     std::cout << "A stop" << std::endl;
-    return 1000;
+    return 100;
 });
 pool->submit([] {
     std::cout << "B start" << std::endl;

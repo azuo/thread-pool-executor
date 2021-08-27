@@ -22,10 +22,15 @@ public:
 	template<class F, class... Args>
 	std::future<std::result_of_t<F(Args...)>> submit(F&& f, Args&&... args);
 
+	typedef enum : size_t {
+		unlimited = 0,
+		singleThread = 1
+	} Size;
+
 	typedef std::shared_ptr<ThreadPool> Ptr;
 	static Ptr newCachedThreadPool() {
 		return std::make_shared<ThreadPool>(
-			0, // unlimited
+			unlimited,
 			std::chrono::seconds(60)
 		);
 	}

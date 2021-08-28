@@ -9,10 +9,10 @@ ThreadPoolExecutor::Ptr executor = ThreadPoolExecutor::newCachedThreadPool();
 ThreadPoolExecutor::Ptr executor = ThreadPoolExecutor::newFixedThreadPool(5);
 ThreadPoolExecutor::Ptr executor = ThreadPoolExecutor::newSingleThreadExecutor();
 ThreadPoolExecutor::Ptr executor = std::make_shared<ThreadPoolExecutor>(
-    1,
-    std::numeric_limits<size_t>::max(),
-    std::chrono::seconds(60),
-    10
+    1,                                      // corePoolSize
+    std::numeric_limits<size_t>::max(),     // maximumPoolSize
+    std::chrono::seconds(60),               // keepAliveTime
+    10                                      // workQueueCapacity
 );
 */
 
@@ -32,10 +32,10 @@ thread_pool_executor::ptr executor = thread_pool_executor::make_cached_thread_po
 thread_pool_executor::ptr executor = thread_pool_executor::make_fixed_thread_pool(5);
 thread_pool_executor::ptr executor = thread_pool_executor::make_single_thread_executor();
 thread_pool_executor::ptr executor = std::make_shared<thread_pool_executor>(
-    1,
-    std::numeric_limits<size_t>::max(),
-    std::chrono::seconds(60),
-    10
+    1,                                      // core_pool_size
+    std::numeric_limits<size_t>::max(),     // maximum_pool_size
+    std::chrono::seconds(60),               // keep_alive_time
+    10                                      // work_queue_capacity
 );
 */
 
@@ -55,10 +55,10 @@ ExecutorService executor = Executors.newCachedThreadPool();
 ExecutorService executor = Executors.newFixedThreadPool(5);
 ExecutorService executor = Executors.newSingleThreadExecutor();
 ExecutorService executor = new ThreadPoolExecutor(
-    1,
-    Integer.MAX_VALUE,
-    60, TimeUnit.SECONDS,
-    new ArrayBlockingQueue<Runnable>(10)
+    1,                                      // corePoolSize
+    Integer.MAX_VALUE,                      // maximumPoolSize
+    60, TimeUnit.SECONDS,                   // keepAliveTime & unit
+    new ArrayBlockingQueue<Runnable>(10)    // workQueue
 );
 */
 

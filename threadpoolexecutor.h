@@ -82,7 +82,7 @@ ThreadPoolExecutor::ThreadPoolExecutor(
 	size_t corePoolSize,
 	size_t maximumPoolSize,
 	const std::chrono::duration<Rep, Period>& keepAliveTime,
-	size_t queueCapacity
+	size_t workQueueCapacity
 ) : size(corePoolSize),
 	maxSize(maximumPoolSize),
 	timeout(
@@ -90,7 +90,7 @@ ThreadPoolExecutor::ThreadPoolExecutor(
 		std::chrono::duration<double>::max() :
 		keepAliveTime
 	),
-	capacity(queueCapacity),
+	capacity(workQueueCapacity),
 	terminate(false),
 	idles(0) {
 	if (size < 0 || maxSize <= 0 || maxSize < size || capacity < 0 ||
@@ -160,8 +160,8 @@ ThreadPoolExecutor::submit(F&& f, Args&&... args) {
 	if (terminate)
 		throw std::runtime_error("Submit rejected: already shutdown.");
 
-	size_t pool = workers.size();
-	size_t queue = works.size();
+	const size_t pool = workers.size();
+	const size_t queue = works.size();
 	if (pool >= maxSize && queue >= idles && queue >= capacity)
 		throw std::out_of_range("Submit rejected: pool/queue full.");
 
@@ -230,12 +230,12 @@ public:
 		size_t core_pool_size,
 		size_t maximum_pool_size,
 		const std::chrono::duration<Rep, Period>& keep_alive_time,
-		size_t queue_capacity
+		size_t work_queue_capacity
 	) : ThreadPoolExecutor(
 		core_pool_size,
 		maximum_pool_size,
 		keep_alive_time,
-		queue_capacity
+		work_queue_capacity
 	) {}
 	virtual ~thread_pool_executor() {}
 

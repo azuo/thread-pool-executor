@@ -1,6 +1,7 @@
 /.settings
+/bin
 /Debug
 /Release
-/src
+/.classpath
 /.cproject
 /.project

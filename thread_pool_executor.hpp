@@ -1,5 +1,5 @@
-#ifndef THREAD_POOL_EXECUTOR_H
-#define THREAD_POOL_EXECUTOR_H
+#ifndef THREAD_POOL_EXECUTOR_HPP
+#define THREAD_POOL_EXECUTOR_HPP
 
 #include <queue>
 #include <unordered_map>
@@ -94,8 +94,12 @@ ThreadPoolExecutor::ThreadPoolExecutor(
 	terminate(false),
 	idles(0) {
 	if (size < 0 || maxSize <= 0 || maxSize < size || capacity < 0 ||
-		!(timeout >= std::chrono::duration<double>::zero())) // NaN
-		throw std::invalid_argument("Invalid thread pool executor arguments.");
+		!(timeout >= std::chrono::duration<double>::zero())	// NaN
+	) {
+		throw std::invalid_argument(
+			"Illegal arguments for constructing thread pool executor."
+		);
+	}
 }
 
 inline ThreadPoolExecutor::~ThreadPoolExecutor() {
@@ -158,22 +162,23 @@ std::future<std::result_of_t<F(Args...)>>
 ThreadPoolExecutor::submit(F&& f, Args&&... args) {
 	std::unique_lock<std::mutex> lock(mutex);
 	if (terminate)
-		throw std::runtime_error("Submit rejected: already shutdown.");
+		throw std::logic_error("Task rejected: already shutdown.");
 
 	const size_t pool = workers.size();
 	const size_t queue = works.size();
 	bool newThread;
 	if (pool < size)
 		newThread = true;
-	else if (queue < capacity/* || queue < idles */)
+	else if (pool > 0 && queue < capacity + idles)
 		newThread = false;
 	else if (pool < maxSize)
 		newThread = true;
 	else {
-		throw std::out_of_range(
-				"Submit rejected: pool = " + std::to_string(pool) +
-				" (" + std::to_string(pool - idles) +
-				" active), queue = " + std::to_string(queue));
+		throw std::runtime_error(
+			"Task rejected: pool size = " + std::to_string(pool) +
+			", active threads = " + std::to_string(pool - idles) +
+			", queued tasks = " + std::to_string(queue)
+		);
 	}
 
 	auto task =
@@ -232,6 +237,7 @@ ThreadPoolExecutor::submit(F&& f, Args&&... args) {
 		works.emplace([task]() -> void { (*task)(); });
 		lock.unlock();
 		resumption.notify_one();
+		std::this_thread::yield();
 	}
 
 	return task->get_future();
@@ -263,6 +269,7 @@ public:
 	bool wait_for(const std::chrono::duration<Rep, Period>& timeout) {
 		return impl.awaitTermination(timeout);
 	}
+	void wait() { impl.awaitTermination(std::chrono::seconds::max()); }
 
 	template<class F, class... Args>
 	std::future<std::result_of_t<F(Args...)>> submit(F&& f, Args&&... args) {

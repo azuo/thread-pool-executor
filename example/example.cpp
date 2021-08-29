@@ -51,14 +51,12 @@ int main() {
 				}, n, udist(random)));
 			}
 			catch (const std::exception& e) {
-				LOG << "submit " << n << " *** ERROR *** " << e.what();
+				LOG << "submit " << n << ": *** ERROR *** " << e.what();
 				break;
 			}
-			size_t pool = executor.pool_size();
-			size_t queue = executor.queue_size();
-			size_t active = executor.active_count();
-			LOG << "submit " << n << ": pool = " << pool
-				<< " (" << active << " active), queue = " << queue;
+			LOG << "submit " << n << ": pool = " << executor.pool_size()
+				<< " (" << executor.active_count()
+				<< " active), queue = " << executor.queue_size();
 		}
 		if (i == 0)
 			std::this_thread::sleep_for(5s);
@@ -71,14 +69,14 @@ int main() {
 
 	std::this_thread::sleep_for(3s);
 
-	LOG << "shutdown, pool = " << executor.pool_size()
+	LOG << "shutdown: pool = " << executor.pool_size()
 		<< " (" << executor.active_count()
 		<< " active), queue = " << executor.queue_size();
 
 	executor.shutdown();
 	executor.wait();
 
-	LOG << "terminated, pool = " << executor.pool_size()
+	LOG << "terminated: pool = " << executor.pool_size()
 		<< " (" << executor.active_count()
 		<< " active), queue = " << executor.queue_size();
 	return 0;

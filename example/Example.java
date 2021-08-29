@@ -14,8 +14,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class Example {
 	private static void LOG(String m) {
 		System.out.println(
-			new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(new Date()) +
-			" " + m);
+			new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").format(new Date())
+			+ " " + m
+		);
 	}
 
 	private static void TLOG(String m) {
@@ -63,14 +64,12 @@ public class Example {
 					}));
 				}
 				catch (RejectedExecutionException e) {
-					LOG("submit " + n + " *** ERROR *** " + e.getMessage());
+					LOG("submit " + n + ": *** ERROR *** " + e.getMessage());
 					break;
 				}
-				int pool = executor.getPoolSize();
-				int queue = executor.getQueue().size();
-				int active = executor.getActiveCount();
-				LOG("submit " + n + ": pool = " + pool +
-					" (" + active + " active), queue = " + queue);
+				LOG("submit " + n + ": pool = " + executor.getPoolSize() +
+					" (" + executor.getActiveCount() +
+					" active), queue = " + executor.getQueue().size());
 			}
 			if (i == 0)
 				Thread.sleep(5000);
@@ -83,14 +82,14 @@ public class Example {
 
 		Thread.sleep(3000);
 
-		LOG("shutdown, pool = " + executor.getPoolSize() +
+		LOG("shutdown: pool = " + executor.getPoolSize() +
 			" (" + executor.getActiveCount() +
 			" active), queue = " + executor.getQueue().size());
 
 		executor.shutdown();
 		executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
 
-		LOG("terminated, pool = " + executor.getPoolSize() +
+		LOG("terminated: pool = " + executor.getPoolSize() +
 			" (" + executor.getActiveCount() +
 			" active), queue = " + executor.getQueue().size());
 	}

@@ -162,27 +162,47 @@ ThreadPoolExecutor::submit(F&& f, Args&&... args) {
 
 	const size_t pool = workers.size();
 	const size_t queue = works.size();
-	if (pool >= maxSize && queue >= idles && queue >= capacity)
-		throw std::out_of_range("Submit rejected: pool/queue full.");
+	bool newThread;
+	if (pool < size)
+		newThread = true;
+	else if (queue < capacity/* || queue < idles */)
+		newThread = false;
+	else if (pool < maxSize)
+		newThread = true;
+	else {
+		throw std::out_of_range(
+				"Submit rejected: pool = " + std::to_string(pool) +
+				" (" + std::to_string(pool - idles) +
+				" active), queue = " + std::to_string(queue));
+	}
 
 	auto task =
 		std::make_shared<std::packaged_task<std::result_of_t<F(Args...)>()>>(
 			std::bind(std::forward<F>(f), std::forward<Args>(args)...)
 		);
 
-	if (pool < size || (pool < maxSize && queue >= idles)) {
-		std::thread worker([this](auto task) -> void {
-			(*task)();
-			task = nullptr;
+	if (newThread) {
+		// tasks submitted after queue saturation will be executed immediately,
+		// bypassing any already queued tasks, per Java's behavior
+		std::thread worker([this](auto&& first) -> void {
+			(*first)();
+			first = nullptr;
 			while (true) {
 				std::unique_lock<std::mutex> lock(mutex);
+				bool core = workers.size() <= size;
 				if (!terminate && works.empty() &&
-					timeout > std::chrono::duration<double>::zero()) {
+					(core || timeout > std::chrono::duration<double>::zero())
+				) {
 					++ idles;
-					if (timeout >= std::chrono::duration<double>::max())
+					if (core || timeout >= std::chrono::duration<double>::max())
 						resumption.wait(lock);
-					else
-						resumption.wait_for(lock, timeout);
+					else if (
+						resumption.wait_for(lock, timeout)
+							== std::cv_status::timeout &&
+						workers.size() <= size && !terminate && works.empty()
+					) {
+						resumption.wait(lock);	// kept as a core worker
+					}
 					-- idles;
 				}
 				if (works.empty()) {
@@ -199,7 +219,6 @@ ThreadPoolExecutor::submit(F&& f, Args&&... args) {
 					}
 					break;
 				}
-
 				auto work = std::move(works.front());
 				works.pop();
 				lock.unlock();
@@ -209,21 +228,19 @@ ThreadPoolExecutor::submit(F&& f, Args&&... args) {
 		workers[worker.get_id()] = std::move(worker);
 		lock.unlock();
 	}
-	else if (queue < idles || queue < capacity) {
+	else {
 		works.emplace([task]() -> void { (*task)(); });
 		lock.unlock();
 		resumption.notify_one();
 	}
-	else
-		throw std::runtime_error("Internal BUG!");	// should never happen
 
 	return task->get_future();
 }
 
 /**
- * With STL naming conversions
+ * A wrapper using STL naming conversions
  */
-class thread_pool_executor : private ThreadPoolExecutor {
+class thread_pool_executor {
 public:
 	template<class Rep, class Period>
 	thread_pool_executor(
@@ -231,7 +248,7 @@ public:
 		size_t maximum_pool_size,
 		const std::chrono::duration<Rep, Period>& keep_alive_time,
 		size_t work_queue_capacity
-	) : ThreadPoolExecutor(
+	) : impl(
 		core_pool_size,
 		maximum_pool_size,
 		keep_alive_time,
@@ -239,28 +256,25 @@ public:
 	) {}
 	virtual ~thread_pool_executor() {}
 
-	void shutdown() { ThreadPoolExecutor::shutdown(); }
-	void shutdown_now() { shutdownNow(); };
+	void shutdown() { impl.shutdown(); }
+	void shutdown_now() { impl.shutdownNow(); };
 
 	template<class Rep, class Period>
 	bool wait_for(const std::chrono::duration<Rep, Period>& timeout) {
-		return awaitTermination(timeout);
+		return impl.awaitTermination(timeout);
 	}
 
 	template<class F, class... Args>
 	std::future<std::result_of_t<F(Args...)>> submit(F&& f, Args&&... args) {
-		return ThreadPoolExecutor::submit(
-			std::forward<F>(f),
-			std::forward<Args>(args)...
-		);
+		return impl.submit(std::forward<F>(f), std::forward<Args>(args)...);
 	}
 
-	bool is_shutdown() const { return isShutdown(); }
-	bool is_terminated() const { return isTerminated(); }
+	bool is_shutdown() const { return impl.isShutdown(); }
+	bool is_terminated() const { return impl.isTerminated(); }
 
-	size_t active_count() const { return getActiveCount(); }
-	size_t pool_size() const { return getPoolSize(); }
-	size_t queue_size() const { return getQueueSize(); }
+	size_t active_count() const { return impl.getActiveCount(); }
+	size_t pool_size() const { return impl.getPoolSize(); }
+	size_t queue_size() const { return impl.getQueueSize(); }
 
 	typedef std::shared_ptr<thread_pool_executor> ptr;
 	static ptr make_cached_thread_pool() {
@@ -287,6 +301,9 @@ public:
 	thread_pool_executor(thread_pool_executor&&) = delete;
 	thread_pool_executor& operator=(const thread_pool_executor&) = delete;
 	thread_pool_executor& operator=(thread_pool_executor&&) = delete;
+
+private:
+	ThreadPoolExecutor impl;
 };
 
 #endif

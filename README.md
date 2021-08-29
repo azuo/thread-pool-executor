@@ -2,7 +2,12 @@
 
 A simple C++ thread pool implementation that conforms to Java's API.
 
-Usage example:
+* C++11
+* A single header file, no external dependencies
+* API and behavior are consistent with Java's ThreadPoolExecutor
+
+### Usage example:
+
 ```c++
 ThreadPoolExecutor::Ptr executor = ThreadPoolExecutor::newCachedThreadPool();
 /*
@@ -25,7 +30,8 @@ executor->shutdown();
 executor->awaitTermination(std::chrono::nanoseconds::max());
 ```
 
-Or with C++ standard library naming conversions:
+### Or with C++ standard library naming conversions:
+
 ```c++
 thread_pool_executor::ptr executor = thread_pool_executor::make_cached_thread_pool();
 /*
@@ -48,7 +54,8 @@ executor->shutdown();
 executor->wait_for(std::chrono::nanoseconds::max());
 ```
 
-Java equivalent:
+### Java equivalent:
+
 ```java
 ExecutorService executor = Executors.newCachedThreadPool();
 /*

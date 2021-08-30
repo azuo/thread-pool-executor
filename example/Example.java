@@ -23,11 +23,11 @@ public class Example {
 		LOG("[" + Thread.currentThread().getName() + "] " + m);
 	}
 
-	private static class LifeCycle implements ThreadFactory {
-		private final AtomicInteger id = new AtomicInteger(1);
+	private static class LifecycleLogger implements ThreadFactory {
+		private final AtomicInteger nextId = new AtomicInteger();
 		@Override
 		public Thread newThread(Runnable r) {
-			Thread t = new Thread(r, "thread-" + id.incrementAndGet()) {
+			Thread t = new Thread(r, "thread-" + nextId.incrementAndGet()) {
 				@Override
 				public void run() {
 					TLOG("+++");
@@ -43,23 +43,25 @@ public class Example {
 	public static void main(String[] args) throws Exception {
 		ThreadPoolExecutor executor = new ThreadPoolExecutor(
 			1, 3, 0, TimeUnit.SECONDS, new ArrayBlockingQueue<>(2),
-			new LifeCycle());
-		List<Future<Integer>> futures = new ArrayList<>(10);
+			new LifecycleLogger()
+		);
+		List<Future<Integer>> futures = new ArrayList<>(8);
 
 		Random random = new Random();
 
 		for (int i = 0; i < 2; ++ i) {
-			for (int j = 0; j < 5; ++ j) {
-				final int n = i * 5 + j;
+			for (int j = 0; j < 4; ++ j) {
+				final int n = i * 4 + j + 1;
 				try {
 					futures.add(executor.submit(() -> {
 						TLOG("task " + n + " +++");
+						int ms = random.nextInt(4001) + 1000;
 						try {
-							Thread.sleep((random.nextInt(5) + 1) * 1000);
+							Thread.sleep(ms);
 						}
 						catch (InterruptedException e) {
 						}
-						TLOG("task " + n + " ---");
+						TLOG("task " + n + " --- (" + ms + "ms)");
 						return n;
 					}));
 				}
@@ -69,7 +71,8 @@ public class Example {
 				}
 				LOG("submit " + n + ": pool = " + executor.getPoolSize() +
 					" (" + executor.getActiveCount() +
-					" active), queue = " + executor.getQueue().size());
+					" active), queue = " + executor.getQueue().size() +
+					", completed = " + executor.getCompletedTaskCount());
 			}
 			if (i == 0)
 				Thread.sleep(5000);
@@ -84,13 +87,15 @@ public class Example {
 
 		LOG("shutdown: pool = " + executor.getPoolSize() +
 			" (" + executor.getActiveCount() +
-			" active), queue = " + executor.getQueue().size());
+			" active), queue = " + executor.getQueue().size() +
+			", completed = " + executor.getCompletedTaskCount());
 
 		executor.shutdown();
 		executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
 
 		LOG("terminated: pool = " + executor.getPoolSize() +
 			" (" + executor.getActiveCount() +
-			" active), queue = " + executor.getQueue().size());
+			" active), queue = " + executor.getQueue().size() +
+			", completed = " + executor.getCompletedTaskCount());
 	}
 }

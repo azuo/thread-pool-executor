@@ -55,10 +55,10 @@ executor.shutdown();
 executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
 ```
 
-## Alternate naming conversion
+## Alternate naming convention
 
 If preferred, a thin wrapper class is also available that uses
-lower_case_with_underscores naming conversion, like that used by C++ standard
+lower_case_with_underscores naming convention, like that used by C++ standard
 library:
 
 ```c++

@@ -28,14 +28,16 @@ public:
 	bool awaitTermination(const std::chrono::duration<Rep, Period>& timeout);
 
 	template<class F, class... Args>
-	std::future<std::result_of_t<F(Args...)>> submit(F&& f, Args&&... args);
+	std::future<typename std::result_of<F(Args...)>::type>
+	submit(F&& f, Args&&... args);
 
 	bool isShutdown() const { return terminate; }
 	bool isTerminated() const { return terminate && workers.empty(); }
 
-	size_t getActiveCount() const { return workers.size() - idles; }
 	size_t getPoolSize() const { return workers.size(); }
+	size_t getActiveCount() const { return workers.size() - idles; }
 	size_t getQueueSize() const { return works.size(); }
+	size_t getCompletedTaskCount() const { return completions; }
 
 	typedef std::shared_ptr<ThreadPoolExecutor> Ptr;
 	static Ptr newCachedThreadPool() {
@@ -72,9 +74,10 @@ private:
 	std::condition_variable termination;
 
 	bool terminate;
-	size_t idles;
 	std::unordered_map<std::thread::id, std::thread> workers;
+	size_t idles;
 	std::queue<std::function<void()>> works;
+	size_t completions;
 };
 
 template<class Rep, class Period>
@@ -92,7 +95,8 @@ ThreadPoolExecutor::ThreadPoolExecutor(
 	),
 	capacity(workQueueCapacity),
 	terminate(false),
-	idles(0) {
+	idles(0),
+	completions(0) {
 	if (size < 0 || maxSize <= 0 || maxSize < size || capacity < 0 ||
 		!(timeout >= std::chrono::duration<double>::zero())	// NaN
 	) {
@@ -105,7 +109,7 @@ ThreadPoolExecutor::ThreadPoolExecutor(
 inline ThreadPoolExecutor::~ThreadPoolExecutor() {
 	std::unique_lock<std::mutex> lock(mutex);
 	terminate = true;
-	works = std::queue<std::function<void()>>();
+	works = {};
 	auto workers = std::move(this->workers);
 	lock.unlock();
 	resumption.notify_all();
@@ -125,7 +129,7 @@ inline void ThreadPoolExecutor::shutdown() {
 inline void ThreadPoolExecutor::shutdownNow() {
 	std::unique_lock<std::mutex> lock(mutex);
 	terminate = true;
-	works = std::queue<std::function<void()>>();
+	works = {};
 	lock.unlock();
 	resumption.notify_all();
 }
@@ -158,14 +162,23 @@ inline bool ThreadPoolExecutor::awaitTermination(
 }
 
 template<class F, class... Args>
-std::future<std::result_of_t<F(Args...)>>
+std::future<typename std::result_of<F(Args...)>::type>
 ThreadPoolExecutor::submit(F&& f, Args&&... args) {
 	std::unique_lock<std::mutex> lock(mutex);
-	if (terminate)
-		throw std::logic_error("Task rejected: already shutdown.");
-
 	const size_t pool = workers.size();
 	const size_t queue = works.size();
+	if (terminate) {
+		throw std::logic_error(
+			std::string("Task rejected from thread pool executor[") +
+			(pool > 0 ? "Shutting down" : "Terminated") +
+			", pool size = " + std::to_string(pool) +
+			", active threads = " + std::to_string(pool - idles) +
+			", queued tasks = " + std::to_string(queue) +
+			", completed tasks = " + std::to_string(completions) +
+			"]"
+		);
+	}
+
 	bool newThread;
 	if (pool < size)
 		newThread = true;
@@ -175,25 +188,30 @@ ThreadPoolExecutor::submit(F&& f, Args&&... args) {
 		newThread = true;
 	else {
 		throw std::runtime_error(
-			"Task rejected: pool size = " + std::to_string(pool) +
+			"Task rejected from thread pool executor[Running"
+			", pool size = " + std::to_string(pool) +
 			", active threads = " + std::to_string(pool - idles) +
-			", queued tasks = " + std::to_string(queue)
+			", queued tasks = " + std::to_string(queue) +
+			", completed tasks = " + std::to_string(completions) +
+			"]"
 		);
 	}
 
-	auto task =
-		std::make_shared<std::packaged_task<std::result_of_t<F(Args...)>()>>(
-			std::bind(std::forward<F>(f), std::forward<Args>(args)...)
-		);
+	using result_t = typename std::result_of<F(Args...)>::type;
+	using task_t = std::packaged_task<result_t()>;
+	auto task = std::make_shared<task_t>(
+		std::bind(std::forward<F>(f), std::forward<Args>(args)...)
+	);
 
 	if (newThread) {
 		// tasks submitted after queue saturation will be executed immediately,
 		// bypassing any already queued tasks, per Java's behavior
-		std::thread worker([this](auto&& first) -> void {
+		std::thread worker([this](std::shared_ptr<task_t>&& first) -> void {
 			(*first)();
 			first = nullptr;
 			while (true) {
 				std::unique_lock<std::mutex> lock(mutex);
+				++ completions;
 				bool core = workers.size() <= size;
 				if (!terminate && works.empty() &&
 					(core || timeout > std::chrono::duration<double>::zero())
@@ -237,14 +255,14 @@ ThreadPoolExecutor::submit(F&& f, Args&&... args) {
 		works.emplace([task]() -> void { (*task)(); });
 		lock.unlock();
 		resumption.notify_one();
-		std::this_thread::yield();
 	}
 
+	std::this_thread::yield();
 	return task->get_future();
 }
 
 /**
- * A wrapper using STL naming conversions
+ * A wrapper using STL naming convention
  */
 class thread_pool_executor {
 public:
@@ -272,16 +290,18 @@ public:
 	void wait() { impl.awaitTermination(std::chrono::seconds::max()); }
 
 	template<class F, class... Args>
-	std::future<std::result_of_t<F(Args...)>> submit(F&& f, Args&&... args) {
+	std::future<typename std::result_of<F(Args...)>::type>
+	submit(F&& f, Args&&... args) {
 		return impl.submit(std::forward<F>(f), std::forward<Args>(args)...);
 	}
 
 	bool is_shutdown() const { return impl.isShutdown(); }
 	bool is_terminated() const { return impl.isTerminated(); }
 
-	size_t active_count() const { return impl.getActiveCount(); }
 	size_t pool_size() const { return impl.getPoolSize(); }
+	size_t active_count() const { return impl.getActiveCount(); }
 	size_t queue_size() const { return impl.getQueueSize(); }
+	size_t completed_task_count() const { return impl.getCompletedTaskCount(); }
 
 	typedef std::shared_ptr<thread_pool_executor> ptr;
 	static ptr make_cached_thread_pool() {

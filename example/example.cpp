@@ -28,41 +28,37 @@ struct logger {
 struct lifecycle_logger {
 	static std::atomic_int nextId;
 	const int id;
-	lifecycle_logger() : id(++ nextId) { TLOG(id) << "+++"; }
+	lifecycle_logger() : id(nextId ++) { TLOG(id) << "+++"; }
 	~lifecycle_logger()                { TLOG(id) << "---"; }
 };
 std::atomic_int lifecycle_logger::nextId;
 
 int main() {
-	thread_pool_executor executor(1, 3, std::chrono::seconds(0), 2);
+	thread_pool_executor executor(1, 3, std::chrono::seconds(1), 2);
 	std::vector<std::future<int>> futures;
 
     std::default_random_engine random((std::random_device())());
     std::uniform_int_distribution<int> udist(1000, 5000);
 
-	for (int i = 0; i < 2; ++ i) {
-		for (int j = 0; j < 4; ++ j) {
-			int n = i * 4 + j + 1;
-			try {
-				futures.push_back(executor.submit([](int n, int ms) -> int {
-					thread_local lifecycle_logger lc;
-					TLOG(lc.id) << "task " << n << " +++";
-					std::this_thread::sleep_for(std::chrono::milliseconds(ms));
-					TLOG(lc.id) << "task " << n << " --- (" << ms << "ms)";
-					return n;
-				}, n, udist(random)));
-			}
-			catch (const std::exception& e) {
-				LOG << "submit " << n << ": *** ERROR *** " << e.what();
-				break;
-			}
+	for (int i = 0; i < 10; ++ i) {
+		int n = i;
+		try {
+			futures.push_back(executor.submit([](int n, int ms) -> int {
+				thread_local lifecycle_logger lc;
+				TLOG(lc.id) << "task " << n << " +++";
+				std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+				TLOG(lc.id) << "task " << n << " --- (" << ms << "ms)";
+				return n;
+			}, n, udist(random)));
 			LOG << "submit " << n << ": pool = " << executor.pool_size()
 				<< " (" << executor.active_count()
 				<< " active), queue = " << executor.queue_size()
 				<< ", completed = " << executor.completed_task_count();
 		}
-		if (i == 0)
-			std::this_thread::sleep_for(std::chrono::seconds(5));
+		catch (const std::exception& e) {
+			LOG << "submit " << n << ": *** ERROR *** " << e.what();
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
 
 	for (auto&& future : futures) {
@@ -70,7 +66,7 @@ int main() {
 		LOG << "result " << result;
 	}
 
-	std::this_thread::sleep_for(std::chrono::seconds(3));
+	std::this_thread::sleep_for(std::chrono::seconds(2));
 
 	LOG << "shutdown: pool = " << executor.pool_size()
 		<< " (" << executor.active_count()

@@ -27,7 +27,7 @@ public class Example {
 		private final AtomicInteger nextId = new AtomicInteger();
 		@Override
 		public Thread newThread(Runnable r) {
-			Thread t = new Thread(r, "thread-" + nextId.incrementAndGet()) {
+			Thread t = new Thread(r, "thread-" + nextId.getAndIncrement()) {
 				@Override
 				public void run() {
 					TLOG("+++");
@@ -42,40 +42,36 @@ public class Example {
 
 	public static void main(String[] args) throws Exception {
 		ThreadPoolExecutor executor = new ThreadPoolExecutor(
-			1, 3, 0, TimeUnit.SECONDS, new ArrayBlockingQueue<>(2),
+			1, 3, 1, TimeUnit.SECONDS, new ArrayBlockingQueue<>(2),
 			new LifecycleLogger()
 		);
-		List<Future<Integer>> futures = new ArrayList<>(8);
+		List<Future<Integer>> futures = new ArrayList<>(10);
 
 		Random random = new Random();
 
-		for (int i = 0; i < 2; ++ i) {
-			for (int j = 0; j < 4; ++ j) {
-				final int n = i * 4 + j + 1;
-				try {
-					futures.add(executor.submit(() -> {
-						TLOG("task " + n + " +++");
-						int ms = random.nextInt(4001) + 1000;
-						try {
-							Thread.sleep(ms);
-						}
-						catch (InterruptedException e) {
-						}
-						TLOG("task " + n + " --- (" + ms + "ms)");
-						return n;
-					}));
-				}
-				catch (RejectedExecutionException e) {
-					LOG("submit " + n + ": *** ERROR *** " + e.getMessage());
-					break;
-				}
+		for (int i = 0; i < 10; ++ i) {
+			final int n = i;
+			try {
+				futures.add(executor.submit(() -> {
+					TLOG("task " + n + " +++");
+					int ms = random.nextInt(4001) + 1000;
+					try {
+						Thread.sleep(ms);
+					}
+					catch (InterruptedException e) {
+					}
+					TLOG("task " + n + " --- (" + ms + "ms)");
+					return n;
+				}));
 				LOG("submit " + n + ": pool = " + executor.getPoolSize() +
-					" (" + executor.getActiveCount() +
-					" active), queue = " + executor.getQueue().size() +
-					", completed = " + executor.getCompletedTaskCount());
+						" (" + executor.getActiveCount() +
+						" active), queue = " + executor.getQueue().size() +
+						", completed = " + executor.getCompletedTaskCount());
 			}
-			if (i == 0)
-				Thread.sleep(5000);
+			catch (RejectedExecutionException e) {
+				LOG("submit " + n + ": *** ERROR *** " + e.getMessage());
+			}
+			Thread.sleep(1000);
 	    }
 
 		for (Future<Integer> future : futures) {
@@ -83,7 +79,7 @@ public class Example {
 			LOG("result " + result);
 		}
 
-		Thread.sleep(3000);
+		Thread.sleep(2000);
 
 		LOG("shutdown: pool = " + executor.getPoolSize() +
 			" (" + executor.getActiveCount() +

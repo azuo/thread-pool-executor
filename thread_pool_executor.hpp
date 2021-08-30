@@ -70,7 +70,7 @@ private:
 	const size_t capacity;
 
 	std::mutex mutex;
-	std::condition_variable resumption;
+	std::condition_variable condition;
 	std::condition_variable termination;
 
 	bool terminate;
@@ -112,7 +112,7 @@ inline ThreadPoolExecutor::~ThreadPoolExecutor() {
 	works = {};
 	auto workers = std::move(this->workers);
 	lock.unlock();
-	resumption.notify_all();
+	condition.notify_all();
 	for (auto it = workers.begin(); it != workers.end(); ++ it) {
 		if (it->second.joinable())
 			it->second.join();
@@ -123,7 +123,7 @@ inline void ThreadPoolExecutor::shutdown() {
 	std::unique_lock<std::mutex> lock(mutex);
 	terminate = true;
 	lock.unlock();
-	resumption.notify_all();
+	condition.notify_all();
 }
 
 inline void ThreadPoolExecutor::shutdownNow() {
@@ -131,7 +131,7 @@ inline void ThreadPoolExecutor::shutdownNow() {
 	terminate = true;
 	works = {};
 	lock.unlock();
-	resumption.notify_all();
+	condition.notify_all();
 }
 
 template<class Rep, class Period>
@@ -139,26 +139,29 @@ inline bool ThreadPoolExecutor::awaitTermination(
 	const std::chrono::duration<Rep, Period>& timeout
 ) {
 	std::unique_lock<std::mutex> lock(mutex);
-	resumption.wait(lock, [this]() -> bool { return terminate; });
-	if (workers.empty())
+	if (terminate && workers.empty())
 		return true;
+
 	if (!(timeout > std::chrono::duration<Rep, Period>::zero())) // NaN
 		return false;
-	if (std::chrono::duration<Rep, Period>::max() > timeout) {
-		termination.wait_for(lock, timeout);
-		return workers.empty();
+
+	bool infinite = timeout >= std::chrono::duration<Rep, Period>::max();
+	std::chrono::time_point<std::chrono::steady_clock> until;
+	if (!infinite) {
+		using dur_t = std::chrono::steady_clock::duration;
+		until = std::chrono::steady_clock::now() +
+				std::chrono::duration_cast<dur_t>(timeout);
 	}
-	else {
-		//termination.wait(lock);
-		//return true;
-		auto workers = std::move(this->workers);
-		lock.unlock();
-		for (auto it = workers.begin(); it != workers.end(); ++ it) {
-			if (it->second.joinable())
-				it->second.join();
+	while (!terminate || !workers.empty()) {
+		if (infinite)
+			termination.wait(lock);
+		else if (
+			termination.wait_until(lock, until) == std::cv_status::timeout
+		) {
+			return false;
 		}
-		return true;
 	}
+	return true;
 }
 
 template<class F, class... Args>
@@ -209,25 +212,36 @@ ThreadPoolExecutor::submit(F&& f, Args&&... args) {
 		std::thread worker([this](std::shared_ptr<task_t>&& first) -> void {
 			(*first)();
 			first = nullptr;
+
+			const int wait =
+				timeout >= std::chrono::duration<double>::max() ? -1 :
+				timeout > std::chrono::duration<double>::zero() ?  1 : 0;
+
 			while (true) {
 				std::unique_lock<std::mutex> lock(mutex);
 				++ completions;
-				bool core = workers.size() <= size;
-				if (!terminate && works.empty() &&
-					(core || timeout > std::chrono::duration<double>::zero())
-				) {
-					++ idles;
-					if (core || timeout >= std::chrono::duration<double>::max())
-						resumption.wait(lock);
-					else if (
-						resumption.wait_for(lock, timeout)
-							== std::cv_status::timeout &&
-						workers.size() <= size && !terminate && works.empty()
-					) {
-						resumption.wait(lock);	// kept as a core worker
-					}
-					-- idles;
+
+				std::chrono::time_point<std::chrono::steady_clock> until;
+				if (wait > 0) {
+					using dur_t = std::chrono::steady_clock::duration;
+					until = std::chrono::steady_clock::now() +
+							std::chrono::duration_cast<dur_t>(timeout);
 				}
+
+				++ idles;
+				for (bool timedOut = false; !terminate && works.empty(); ) {
+					if (workers.size() <= size || wait < 0)
+						condition.wait(lock);
+					else if (timedOut || wait == 0)
+						break;
+					else {
+						timedOut = condition.wait_until(lock, until)
+								   == std::cv_status::timeout;
+						//if (timedOut && workers.size() > size) break;
+					}
+				}
+				-- idles;
+
 				if (works.empty()) {
 					const auto it = workers.find(std::this_thread::get_id());
 					if (it != workers.cend()) {
@@ -242,6 +256,7 @@ ThreadPoolExecutor::submit(F&& f, Args&&... args) {
 					}
 					break;
 				}
+
 				auto work = std::move(works.front());
 				works.pop();
 				lock.unlock();
@@ -254,7 +269,7 @@ ThreadPoolExecutor::submit(F&& f, Args&&... args) {
 	else {
 		works.emplace([task]() -> void { (*task)(); });
 		lock.unlock();
-		resumption.notify_one();
+		condition.notify_one();
 	}
 
 	std::this_thread::yield();

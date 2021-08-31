@@ -52,7 +52,7 @@ public:
 		return std::make_shared<ThreadPoolExecutor>(
 			nThreads,
 			nThreads,
-			std::chrono::duration<double>::max(),
+			clock::duration::max(),
 			std::numeric_limits<size_t>::max()
 		);
 	}
@@ -64,9 +64,11 @@ public:
 	ThreadPoolExecutor& operator=(ThreadPoolExecutor&&) = delete;
 
 private:
+	typedef std::chrono::steady_clock clock;
+
 	const size_t size;
 	const size_t maxSize;
-	const std::chrono::duration<double> timeout;
+	const clock::duration timeout;
 	const size_t capacity;
 
 	std::mutex mutex;
@@ -78,6 +80,9 @@ private:
 	size_t idles;
 	std::queue<std::function<void()>> works;
 	size_t completions;
+
+	template<class To, class From>
+	static constexpr To duration_cast(const From& from);
 };
 
 template<class Rep, class Period>
@@ -88,21 +93,17 @@ ThreadPoolExecutor::ThreadPoolExecutor(
 	size_t workQueueCapacity
 ) : size(corePoolSize),
 	maxSize(maximumPoolSize),
-	timeout(
-		keepAliveTime >= std::chrono::duration<Rep, Period>::max() ?
-		std::chrono::duration<double>::max() :
-		keepAliveTime
-	),
+	timeout(duration_cast<clock::duration>(keepAliveTime)),
 	capacity(workQueueCapacity),
 	terminate(false),
 	idles(0),
 	completions(0) {
 	if (size < 0 || maxSize <= 0 || maxSize < size || capacity < 0 ||
-		!(timeout >= std::chrono::duration<double>::zero())	// NaN
+		std::isnan(keepAliveTime.count()) || timeout < clock::duration::zero()
 	) {
 		throw std::invalid_argument(
 			"Illegal arguments for constructing thread pool executor."
-		);
+ 		);
 	}
 }
 
@@ -142,16 +143,15 @@ inline bool ThreadPoolExecutor::awaitTermination(
 	if (terminate && workers.empty())
 		return true;
 
-	if (!(timeout > std::chrono::duration<Rep, Period>::zero())) // NaN
+	auto duration = duration_cast<clock::duration>(timeout);
+	if (duration <= clock::duration::zero())
 		return false;
 
-	bool infinite = timeout >= std::chrono::duration<Rep, Period>::max();
-	std::chrono::time_point<std::chrono::steady_clock> until;
-	if (!infinite) {
-		using dur_t = std::chrono::steady_clock::duration;
-		until = std::chrono::steady_clock::now() +
-				std::chrono::duration_cast<dur_t>(timeout);
-	}
+	auto now = clock::now();
+	bool infinite = duration >= clock::time_point::max() - now;
+	std::chrono::time_point<clock> until;
+	if (!infinite)
+		until = now + duration;
 	while (!terminate || !workers.empty()) {
 		if (infinite)
 			termination.wait(lock);
@@ -200,44 +200,42 @@ ThreadPoolExecutor::submit(F&& f, Args&&... args) {
 		);
 	}
 
-	using result_t = typename std::result_of<F(Args...)>::type;
-	using task_t = std::packaged_task<result_t()>;
-	auto task = std::make_shared<task_t>(
+	using Result = typename std::result_of<F(Args...)>::type;
+	using Task = std::packaged_task<Result()>;
+	auto task = std::make_shared<Task>(
 		std::bind(std::forward<F>(f), std::forward<Args>(args)...)
 	);
 
 	if (newThread) {
 		// tasks submitted after queue saturation will be executed immediately,
 		// bypassing any already queued tasks, per Java's behavior
-		std::thread worker([this](std::shared_ptr<task_t>&& first) -> void {
+		std::thread worker([this](std::shared_ptr<Task>&& first) -> void {
 			(*first)();
 			first = nullptr;
-
-			const int wait =
-				timeout >= std::chrono::duration<double>::max() ? -1 :
-				timeout > std::chrono::duration<double>::zero() ?  1 : 0;
 
 			while (true) {
 				std::unique_lock<std::mutex> lock(mutex);
 				++ completions;
 
-				std::chrono::time_point<std::chrono::steady_clock> until;
-				if (wait > 0) {
-					using dur_t = std::chrono::steady_clock::duration;
-					until = std::chrono::steady_clock::now() +
-							std::chrono::duration_cast<dur_t>(timeout);
-				}
+				auto now = clock::now();
+				int wait = timeout >= clock::time_point::max() - now ? -1 :
+						   timeout > clock::duration::zero() ?  1 : 0;
+				std::chrono::time_point<clock> until;
+				if (wait > 0)
+					until = now + timeout;
 
 				++ idles;
-				for (bool timedOut = false; !terminate && works.empty(); ) {
+				while (!terminate && works.empty()) {
 					if (workers.size() <= size || wait < 0)
 						condition.wait(lock);
-					else if (timedOut || wait == 0)
+					else if (wait == 0)
 						break;
-					else {
-						timedOut = condition.wait_until(lock, until)
-								   == std::cv_status::timeout;
-						//if (timedOut && workers.size() > size) break;
+					else if (
+						condition.wait_until(lock, until)
+							== std::cv_status::timeout
+					) {
+						wait = 0;
+						//if (workers.size() > size) break;
 					}
 				}
 				-- idles;
@@ -276,6 +274,21 @@ ThreadPoolExecutor::submit(F&& f, Args&&... args) {
 	return task->get_future();
 }
 
+template<class To, class From>
+inline constexpr To ThreadPoolExecutor::duration_cast(const From& from) {
+	return std::isnan(from.count()) ?
+		   To::zero() :
+		   from >= From::max() ||
+		   std::chrono::duration_cast<std::chrono::duration<double>>(from) >=
+		   std::chrono::duration_cast<std::chrono::duration<double>>(To::max())?
+		   To::max() :
+		   from <= From::min() ||
+		   std::chrono::duration_cast<std::chrono::duration<double>>(from) <=
+		   std::chrono::duration_cast<std::chrono::duration<double>>(To::min())?
+		   To::min() :
+		   std::chrono::duration_cast<To>(from);
+}
+
 /**
  * A wrapper using STL naming convention
  */
@@ -302,7 +315,7 @@ public:
 	bool wait_for(const std::chrono::duration<Rep, Period>& timeout) {
 		return impl.awaitTermination(timeout);
 	}
-	void wait() { impl.awaitTermination(std::chrono::seconds::max()); }
+	void wait() { impl.awaitTermination(clock::duration::max()); }
 
 	template<class F, class... Args>
 	std::future<typename std::result_of<F(Args...)>::type>
@@ -331,7 +344,7 @@ public:
 		return std::make_shared<thread_pool_executor>(
 			threads,
 			threads,
-			std::chrono::duration<double>::max(),
+			clock::duration::max(),
 			std::numeric_limits<size_t>::max()
 		);
 	}
@@ -345,6 +358,7 @@ public:
 	thread_pool_executor& operator=(thread_pool_executor&&) = delete;
 
 private:
+	typedef std::chrono::steady_clock clock;
 	ThreadPoolExecutor impl;
 };
 

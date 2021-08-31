@@ -64,9 +64,9 @@ public class Example {
 					return n;
 				}));
 				LOG("submit " + n + ": pool = " + executor.getPoolSize() +
-						" (" + executor.getActiveCount() +
-						" active), queue = " + executor.getQueue().size() +
-						", completed = " + executor.getCompletedTaskCount());
+					" (" + executor.getActiveCount() +
+					" active), queue = " + executor.getQueue().size() +
+					", completed = " + executor.getCompletedTaskCount());
 			}
 			catch (RejectedExecutionException e) {
 				LOG("submit " + n + ": *** ERROR *** " + e.getMessage());

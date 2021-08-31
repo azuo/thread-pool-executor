@@ -109,6 +109,9 @@ ThreadPoolExecutor::ThreadPoolExecutor(
 
 inline ThreadPoolExecutor::~ThreadPoolExecutor() {
 	std::unique_lock<std::mutex> lock(mutex);
+	if (workers.empty())
+		return;
+
 	terminate = true;
 	works = {};
 	auto workers = std::move(this->workers);
@@ -246,16 +249,17 @@ ThreadPoolExecutor::submit(F&& f, Args&&... args) {
 				-- idles;
 
 				if (works.empty()) {
-					const auto it = workers.find(std::this_thread::get_id());
-					if (it != workers.cend()) {
+					auto it = workers.find(std::this_thread::get_id());
+					if (it != workers.end()) {
 						it->second.detach();
 						workers.erase(it);
-					}
-					if (terminate && workers.empty()) {
-						std::notify_all_at_thread_exit(
-							termination,
-							std::move(lock)
-						);
+
+						if (terminate && workers.empty()) {
+							std::notify_all_at_thread_exit(
+								termination,
+								std::move(lock)
+							);
+						}
 					}
 					break;
 				}

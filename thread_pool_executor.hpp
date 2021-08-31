@@ -14,10 +14,10 @@ class ThreadPoolExecutor {
 public:
 	template<class Rep, class Period>
 	ThreadPoolExecutor(
-		size_t corePoolSize,
-		size_t maximumPoolSize,
+		std::size_t corePoolSize,
+		std::size_t maximumPoolSize,
 		const std::chrono::duration<Rep, Period>& keepAliveTime,
-		size_t queueCapacity
+		std::size_t queueCapacity
 	);
 	virtual ~ThreadPoolExecutor();
 
@@ -34,26 +34,26 @@ public:
 	bool isShutdown() const { return terminate; }
 	bool isTerminated() const { return terminate && workers.empty(); }
 
-	size_t getPoolSize() const { return workers.size(); }
-	size_t getActiveCount() const { return workers.size() - idles; }
-	size_t getQueueSize() const { return works.size(); }
-	size_t getCompletedTaskCount() const { return completions; }
+	std::size_t getPoolSize() const { return workers.size(); }
+	std::size_t getActiveCount() const { return workers.size() - idles; }
+	std::size_t getQueueSize() const { return works.size(); }
+	std::size_t getCompletedTaskCount() const { return completions; }
 
 	typedef std::shared_ptr<ThreadPoolExecutor> Ptr;
 	static Ptr newCachedThreadPool() {
 		return std::make_shared<ThreadPoolExecutor>(
 			0,
-			std::numeric_limits<size_t>::max(),
+			std::numeric_limits<std::size_t>::max(),
 			std::chrono::seconds(60),
 			0
 		);
 	}
-	static Ptr newFixedThreadPool(size_t nThreads) {
+	static Ptr newFixedThreadPool(std::size_t nThreads) {
 		return std::make_shared<ThreadPoolExecutor>(
 			nThreads,
 			nThreads,
-			clock::duration::max(),
-			std::numeric_limits<size_t>::max()
+			Clock::duration::max(),
+			std::numeric_limits<std::size_t>::max()
 		);
 	}
 	static Ptr newSingleThreadExecutor() { return newFixedThreadPool(1); }
@@ -64,12 +64,12 @@ public:
 	ThreadPoolExecutor& operator=(ThreadPoolExecutor&&) = delete;
 
 private:
-	typedef std::chrono::steady_clock clock;
+	typedef std::chrono::steady_clock Clock;
 
-	const size_t size;
-	const size_t maxSize;
-	const clock::duration timeout;
-	const size_t capacity;
+	const std::size_t size;
+	const std::size_t maxSize;
+	const Clock::duration timeout;
+	const std::size_t capacity;
 
 	std::mutex mutex;
 	std::condition_variable condition;
@@ -77,9 +77,9 @@ private:
 
 	bool terminate;
 	std::unordered_map<std::thread::id, std::thread> workers;
-	size_t idles;
+	std::size_t idles;
 	std::queue<std::function<void()>> works;
-	size_t completions;
+	std::size_t completions;
 
 	template<class To, class From>
 	static constexpr To duration_cast(const From& from);
@@ -87,19 +87,19 @@ private:
 
 template<class Rep, class Period>
 ThreadPoolExecutor::ThreadPoolExecutor(
-	size_t corePoolSize,
-	size_t maximumPoolSize,
+	std::size_t corePoolSize,
+	std::size_t maximumPoolSize,
 	const std::chrono::duration<Rep, Period>& keepAliveTime,
-	size_t workQueueCapacity
+	std::size_t workQueueCapacity
 ) : size(corePoolSize),
 	maxSize(maximumPoolSize),
-	timeout(duration_cast<clock::duration>(keepAliveTime)),
+	timeout(duration_cast<Clock::duration>(keepAliveTime)),
 	capacity(workQueueCapacity),
 	terminate(false),
 	idles(0),
 	completions(0) {
 	if (size < 0 || maxSize <= 0 || maxSize < size || capacity < 0 ||
-		std::isnan(keepAliveTime.count()) || timeout < clock::duration::zero()
+		std::isnan(keepAliveTime.count()) || timeout < Clock::duration::zero()
 	) {
 		throw std::invalid_argument(
 			"Illegal arguments for constructing thread pool executor."
@@ -114,9 +114,9 @@ inline ThreadPoolExecutor::~ThreadPoolExecutor() {
 	auto workers = std::move(this->workers);
 	lock.unlock();
 	condition.notify_all();
-	for (auto it = workers.begin(); it != workers.end(); ++ it) {
-		if (it->second.joinable())
-			it->second.join();
+	for (auto&& pair : workers) {
+		if (pair.second.joinable())
+			pair.second.join();
 	}
 }
 
@@ -143,13 +143,13 @@ inline bool ThreadPoolExecutor::awaitTermination(
 	if (terminate && workers.empty())
 		return true;
 
-	auto duration = duration_cast<clock::duration>(timeout);
-	if (duration <= clock::duration::zero())
+	auto duration = duration_cast<Clock::duration>(timeout);
+	if (duration <= Clock::duration::zero())
 		return false;
 
-	auto now = clock::now();
-	bool infinite = duration >= clock::time_point::max() - now;
-	std::chrono::time_point<clock> until;
+	auto now = Clock::now();
+	std::chrono::time_point<Clock> until;
+	bool infinite = duration >= Clock::time_point::max() - now;
 	if (!infinite)
 		until = now + duration;
 	while (!terminate || !workers.empty()) {
@@ -168,8 +168,8 @@ template<class F, class... Args>
 std::future<typename std::result_of<F(Args...)>::type>
 ThreadPoolExecutor::submit(F&& f, Args&&... args) {
 	std::unique_lock<std::mutex> lock(mutex);
-	const size_t pool = workers.size();
-	const size_t queue = works.size();
+	const std::size_t pool = workers.size();
+	const std::size_t queue = works.size();
 	if (terminate) {
 		throw std::logic_error(
 			std::string("Task rejected from thread pool executor[") +
@@ -217,12 +217,17 @@ ThreadPoolExecutor::submit(F&& f, Args&&... args) {
 				std::unique_lock<std::mutex> lock(mutex);
 				++ completions;
 
-				auto now = clock::now();
-				int wait = timeout >= clock::time_point::max() - now ? -1 :
-						   timeout > clock::duration::zero() ?  1 : 0;
-				std::chrono::time_point<clock> until;
-				if (wait > 0)
+				auto now = Clock::now();
+				std::chrono::time_point<Clock> until;
+				int wait;
+				if (timeout >= Clock::time_point::max() - now)
+					wait = -1;	// infinite
+				else if (timeout <= Clock::duration::zero())
+					wait = 0;	// no wait
+				else {
+					wait = 1;	// finite
 					until = now + timeout;
+				}
 
 				++ idles;
 				while (!terminate && works.empty()) {
@@ -296,10 +301,10 @@ class thread_pool_executor {
 public:
 	template<class Rep, class Period>
 	thread_pool_executor(
-		size_t core_pool_size,
-		size_t maximum_pool_size,
+		std::size_t core_pool_size,
+		std::size_t maximum_pool_size,
 		const std::chrono::duration<Rep, Period>& keep_alive_time,
-		size_t work_queue_capacity
+		std::size_t work_queue_capacity
 	) : impl(
 		core_pool_size,
 		maximum_pool_size,
@@ -326,26 +331,28 @@ public:
 	bool is_shutdown() const { return impl.isShutdown(); }
 	bool is_terminated() const { return impl.isTerminated(); }
 
-	size_t pool_size() const { return impl.getPoolSize(); }
-	size_t active_count() const { return impl.getActiveCount(); }
-	size_t queue_size() const { return impl.getQueueSize(); }
-	size_t completed_task_count() const { return impl.getCompletedTaskCount(); }
+	std::size_t pool_size() const { return impl.getPoolSize(); }
+	std::size_t active_count() const { return impl.getActiveCount(); }
+	std::size_t queue_size() const { return impl.getQueueSize(); }
+	std::size_t completed_task_count() const {
+		return impl.getCompletedTaskCount();
+	}
 
 	typedef std::shared_ptr<thread_pool_executor> ptr;
 	static ptr make_cached_thread_pool() {
 		return std::make_shared<thread_pool_executor>(
 			0,
-			std::numeric_limits<size_t>::max(),
+			std::numeric_limits<std::size_t>::max(),
 			std::chrono::seconds(60),
 			0
 		);
 	}
-	static ptr make_fixed_thread_pool(size_t threads) {
+	static ptr make_fixed_thread_pool(std::size_t threads) {
 		return std::make_shared<thread_pool_executor>(
 			threads,
 			threads,
 			clock::duration::max(),
-			std::numeric_limits<size_t>::max()
+			std::numeric_limits<std::size_t>::max()
 		);
 	}
 	static ptr make_single_thread_executor() {

@@ -25,6 +25,7 @@ public class Example {
 
 	private static class LifecycleLogger implements ThreadFactory {
 		private final AtomicInteger nextId = new AtomicInteger();
+
 		@Override
 		public Thread newThread(Runnable r) {
 			Thread t = new Thread(r, "thread-" + nextId.getAndIncrement()) {
@@ -51,10 +52,10 @@ public class Example {
 
 		for (int i = 0; i < 10; ++ i) {
 			final int n = i;
+			final int ms = random.nextInt(4001) + 1000;
 			try {
 				futures.add(executor.submit(() -> {
 					TLOG("task " + n + " +++");
-					int ms = random.nextInt(4001) + 1000;
 					try {
 						Thread.sleep(ms);
 					}

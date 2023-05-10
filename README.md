@@ -5,7 +5,7 @@ behaviors.
 
 * C++11
 * A single header file, no external dependencies
-* API and behaviors are consistent with Java's ThreadPoolExecutor
+* API and behaviors are consistent with Java's [ThreadPoolExecutor](https://docs.oracle.com/javase/8/docs/api/java/util/concurrent/ThreadPoolExecutor.html)
 
 ## Usage example
 

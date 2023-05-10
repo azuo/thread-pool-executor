@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <future>
 #include <functional>
+#include <cmath>
 
 /**
  * C++ ThreadPoolExecutor that conforms to Java API
@@ -139,7 +140,7 @@ inline void ThreadPoolExecutor::shutdownNow() {
 }
 
 template<class Rep, class Period>
-inline bool ThreadPoolExecutor::awaitTermination(
+bool ThreadPoolExecutor::awaitTermination(
 	const std::chrono::duration<Rep, Period>& timeout
 ) {
 	std::unique_lock<std::mutex> lock(mutex);
@@ -284,7 +285,7 @@ ThreadPoolExecutor::submit(F&& f, Args&&... args) {
 }
 
 template<class To, class From>
-inline constexpr To ThreadPoolExecutor::duration_cast(const From& from) {
+constexpr To ThreadPoolExecutor::duration_cast(const From& from) {
 	return std::isnan(from.count()) ?
 		   To::zero() :
 		   from >= From::max() ||
